@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/rlpx"
+
 	"github.com/ethereum/hive/simulators/ethereum/engine/client"
 	"github.com/ethereum/hive/simulators/ethereum/engine/clmock"
 )
@@ -98,8 +99,9 @@ func (d *P2PDest) Dial() (*Conn, error) {
 		{Name: "eth", Version: 66},
 		{Name: "eth", Version: 67},
 		{Name: "eth", Version: 68},
+		{Name: "eth", Version: 69},
 	}
-	conn.ourHighestProtoVersion = 68
+	conn.ourHighestProtoVersion = 69
 	return &conn, nil
 }
 
