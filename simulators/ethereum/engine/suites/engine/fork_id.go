@@ -48,7 +48,8 @@ func (ft ForkIDSpec) Execute(t *test.Env) {
 
 	// Get client index's enode
 	engine := t.Engine
-	conn, err := devp2p.PeerEngineClient(engine, t.CLMock)
+	// Use eth/68 protocol for ForkID tests to avoid eth/69 compatibility issues
+	conn, err := devp2p.PeerWithProtocol(engine, t.CLMock, 68)
 	if err != nil {
 		t.Fatalf("FAIL: Error peering engine client: %v", err)
 	}

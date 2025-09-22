@@ -44,9 +44,16 @@ var (
 type P2PDest struct {
 	*enode.Node
 	ConsensusEngine *clmock.CLMocker
+	ProtocolVersion uint
 }
 
 func PeerEngineClient(engine client.EngineClient, consensusEngine *clmock.CLMocker) (*Conn, error) {
+	return PeerWithProtocol(engine, consensusEngine, 0)
+}
+
+// PeerWithProtocol creates a connection with a specific eth protocol version.
+// If protocolVersion is 0, it uses the highest available protocol (default behavior).
+func PeerWithProtocol(engine client.EngineClient, consensusEngine *clmock.CLMocker, protocolVersion uint) (*Conn, error) {
 	enodeURL, err := engine.EnodeURL()
 	if err != nil {
 		return nil, fmt.Errorf("error getting enode: %v", err)
@@ -58,8 +65,9 @@ func PeerEngineClient(engine client.EngineClient, consensusEngine *clmock.CLMock
 	p2pDest := P2PDest{
 		Node:            clientEnode,
 		ConsensusEngine: consensusEngine,
+		ProtocolVersion: protocolVersion,
 	}
-	conn, err := p2pDest.Dial()
+	conn, err := p2pDest.DialWithProtocol(protocolVersion)
 	if err != nil {
 		return nil, fmt.Errorf("error dialing enode: %v", err)
 	}
@@ -73,6 +81,12 @@ func PeerEngineClient(engine client.EngineClient, consensusEngine *clmock.CLMock
 // dial attempts to dial the given node and perform a handshake,
 // returning the created Conn if successful.
 func (d *P2PDest) Dial() (*Conn, error) {
+	return d.DialWithProtocol(0)
+}
+
+// DialWithProtocol attempts to dial the given node with a specific eth protocol version,
+// returning the created Conn if successful.
+func (d *P2PDest) DialWithProtocol(protocolVersion uint) (*Conn, error) {
 	// dial
 	var err error
 	fd, err := net.Dial("tcp", fmt.Sprintf("%v:%d", d.IP(), d.TCP()))
@@ -94,14 +108,25 @@ func (d *P2PDest) Dial() (*Conn, error) {
 		return nil, err
 	}
 	conn.remoteKey = pubKey
-	// set default p2p capabilities
-	conn.caps = []p2p.Cap{
-		{Name: "eth", Version: 66},
-		{Name: "eth", Version: 67},
-		{Name: "eth", Version: 68},
-		{Name: "eth", Version: 69},
+
+	// Set capabilities based on requested protocol version
+	if protocolVersion == 0 {
+		// Default behavior - advertise all versions
+		conn.caps = []p2p.Cap{
+			{Name: "eth", Version: 66},
+			{Name: "eth", Version: 67},
+			{Name: "eth", Version: 68},
+			{Name: "eth", Version: 69},
+		}
+		conn.ourHighestProtoVersion = 69
+	} else {
+		// Specific protocol version - only advertise that version
+		conn.caps = []p2p.Cap{
+			{Name: "eth", Version: protocolVersion},
+		}
+		conn.ourHighestProtoVersion = protocolVersion
 	}
-	conn.ourHighestProtoVersion = 69
+
 	return &conn, nil
 }
 
