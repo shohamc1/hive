@@ -23,12 +23,15 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/rlpx"
 	"github.com/ethereum/go-ethereum/rlp"
+
 	"github.com/ethereum/hive/simulators/ethereum/engine/clmock"
 )
 
@@ -88,8 +91,21 @@ func (msg Pong) ReqID() uint64 { return 0 }
 // Status is the network packet for the status message for eth/64 and later.
 type Status eth.StatusPacket
 
+// Status69 is the network packet for the status message for eth/69 and later.
+type Status69 struct {
+	ProtocolVersion           uint32
+	NetworkID                 uint64
+	Genesis                   common.Hash
+	ForkID                    forkid.ID
+	MinimumBlock, LatestBlock uint64
+	LatestBlockHash           common.Hash
+}
+
 func (msg Status) Code() int     { return 16 }
 func (msg Status) ReqID() uint64 { return 0 }
+
+func (msg Status69) Code() int     { return 16 }
+func (msg Status69) ReqID() uint64 { return 0 }
 
 // NewBlockHashes is the network packet for the block announcements.
 type NewBlockHashes eth.NewBlockHashesPacket
@@ -198,6 +214,14 @@ func (c *Conn) Read() (Message, error) {
 	case (Disconnect{}).Code():
 		msg = new(Disconnect)
 	case (Status{}).Code():
+		// Try decoding as Status69 first for eth/69+
+		if c.negotiatedProtoVersion >= 69 {
+			msg = new(Status69)
+			//if err := rlp.DecodeBytes(rawData, msg); err == nil {
+			//	return msg, nil
+			//}
+		}
+		// Fall back to Status for eth/68 and below
 		msg = new(Status)
 	case (GetBlockHeaders{}).Code():
 		ethMsg := new(eth.GetBlockHeadersPacket)
@@ -369,6 +393,19 @@ loop:
 			}
 			message = msg
 			break loop
+		case *Status69:
+			if have, want := msg.LatestBlockHash, c.consensusEngine.LatestHeader.Hash(); have != want {
+				return nil, fmt.Errorf("wrong head block in status69, want:  %#x (block %d) have %#x",
+					want, c.consensusEngine.LatestHeader.Number.Uint64(), have)
+			}
+			if have, want := msg.ForkID, localForkID; !reflect.DeepEqual(have, want) {
+				return nil, fmt.Errorf("wrong fork ID in status69: have (hash=%#x, next=%d), want (hash=%#x, next=%d)", have.Hash, have.Next, want.Hash, want.Next)
+			}
+			if have, want := msg.ProtocolVersion, c.ourHighestProtoVersion; have != uint32(want) {
+				return nil, fmt.Errorf("wrong protocol version: have %d, want %d", have, want)
+			}
+			message = msg
+			break loop
 		case *Disconnect:
 			return nil, fmt.Errorf("disconnect received: %v", msg.Reason)
 		case *Ping:
@@ -384,17 +421,36 @@ loop:
 	}
 	if status == nil {
 		// default status message
-		status = &Status{
-			ProtocolVersion: uint32(c.negotiatedProtoVersion),
-			NetworkID:       c.consensusEngine.Genesis.Config.ChainID.Uint64(),
-			TD:              c.consensusEngine.ChainTotalDifficulty,
-			Head:            c.consensusEngine.LatestHeader.Hash(),
-			Genesis:         c.consensusEngine.GenesisBlock().Hash(),
-			ForkID:          localForkID,
+		if c.negotiatedProtoVersion >= 69 {
+			status69 := &Status69{
+				ProtocolVersion: uint32(c.negotiatedProtoVersion),
+				NetworkID:       c.consensusEngine.Genesis.Config.ChainID.Uint64(),
+				Genesis:         c.consensusEngine.GenesisBlock().Hash(),
+				ForkID:          localForkID,
+				MinimumBlock:    0, // TODO: Get actual minimum block from consensus engine
+				LatestBlock:     c.consensusEngine.LatestHeader.Number.Uint64(),
+				LatestBlockHash: c.consensusEngine.LatestHeader.Hash(),
+			}
+			if _, err := c.Write(status69); err != nil {
+				return nil, fmt.Errorf("write to connection failed: %v", err)
+			}
+		} else {
+			status = &Status{
+				ProtocolVersion: uint32(c.negotiatedProtoVersion),
+				NetworkID:       c.consensusEngine.Genesis.Config.ChainID.Uint64(),
+				TD:              c.consensusEngine.ChainTotalDifficulty,
+				Head:            c.consensusEngine.LatestHeader.Hash(),
+				Genesis:         c.consensusEngine.GenesisBlock().Hash(),
+				ForkID:          localForkID,
+			}
+			if _, err := c.Write(status); err != nil {
+				return nil, fmt.Errorf("write to connection failed: %v", err)
+			}
 		}
-	}
-	if _, err := c.Write(status); err != nil {
-		return nil, fmt.Errorf("write to connection failed: %v", err)
+	} else {
+		if _, err := c.Write(status); err != nil {
+			return nil, fmt.Errorf("write to connection failed: %v", err)
+		}
 	}
 	return message, nil
 }
