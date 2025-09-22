@@ -215,12 +215,12 @@ func (c *Conn) Read() (Message, error) {
 		msg = new(Disconnect)
 	case (Status{}).Code():
 		// Try decoding as Status69 first for eth/69+
-		//if c.negotiatedProtoVersion >= 69 {
-		//	msg = new(Status69)
-		//	if err := rlp.DecodeBytes(rawData, msg); err == nil {
-		//		return msg, nil
-		//	}
-		//}
+		if c.negotiatedProtoVersion >= 69 {
+			msg = new(Status69)
+			if err := rlp.DecodeBytes(rawData, msg); err == nil {
+				return msg, nil
+			}
+		}
 		// Fall back to Status for eth/68 and below
 		msg = new(Status69)
 	case (GetBlockHeaders{}).Code():
